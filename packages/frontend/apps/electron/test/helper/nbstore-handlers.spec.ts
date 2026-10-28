@@ -3,15 +3,13 @@ import { ObjectPool } from '@toeverything/infra';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@affine/native', () => ({
-  DocStoragePool: class {
-    constructor() {
-      return new Proxy(
-        {},
-        {
-          get: () => () => undefined,
-        }
-      );
-    }
+  DocStoragePool: function DocStoragePool() {
+    return new Proxy(
+      {},
+      {
+        get: () => () => undefined,
+      }
+    );
   },
 }));
 
