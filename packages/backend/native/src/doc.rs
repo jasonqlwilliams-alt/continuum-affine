@@ -333,6 +333,112 @@ pub fn parse_workspace_doc(doc_bin: Buffer) -> Result<Option<NativeWorkspaceDocC
   Ok(result.map(Into::into))
 }
 
+fn get_block_string(block: &y_octo::Map, key: &str) -> Option<String> {
+  match block.get(key)?.to_any()? {
+    y_octo::Any::String(s) => Some(s),
+    _ => None,
+  }
+}
+
+fn render_attachment_block_markdown(block: &y_octo::Map) -> String {
+  let name = get_block_string(block, "prop:name").unwrap_or_default();
+  let source_id = get_block_string(block, "prop:sourceId").unwrap_or_default();
+  let label = if name.is_empty() {
+    source_id.as_str()
+  } else {
+    name.as_str()
+  };
+  let escaped_label = label.replace('\\', "\\\\").replace('[', "\\[").replace(']', "\\]");
+  if !source_id.is_empty() {
+    format!("\n[{escaped_label}](blob://{source_id})\n\n")
+  } else if !label.is_empty() {
+    format!("\n{escaped_label}\n\n")
+  } else {
+    String::new()
+  }
+}
+
+fn parse_doc_to_markdown_with_attachments(
+  doc_bin: Vec<u8>,
+  doc_id: String,
+  ai_editable: bool,
+  doc_url_prefix: Option<String>,
+) -> std::result::Result<MarkdownResult, doc_loader::ParseError> {
+  let result = doc_loader::parse_doc_to_markdown(
+    doc_bin.clone(),
+    doc_id.clone(),
+    ai_editable,
+    doc_url_prefix.clone(),
+  )?;
+  if !result
+    .known_unsupported_blocks
+    .iter()
+    .any(|entry| entry.ends_with(":affine:attachment"))
+  {
+    return Ok(result);
+  }
+
+  let mut doc = y_octo::DocOptions::new().with_guid(doc_id.clone()).build();
+  if doc.apply_update_from_binary_v1(doc_bin).is_err() {
+    return Ok(result);
+  }
+  let Ok(blocks) = doc.get_map("blocks") else {
+    return Ok(result);
+  };
+
+  let mut replacements: Vec<(String, String)> = Vec::new();
+  for entry in &result.known_unsupported_blocks {
+    let Some(block_id) = entry.strip_suffix(":affine:attachment") else {
+      continue;
+    };
+    let Some(mut block) = blocks.get(block_id).and_then(|v| v.to_map()) else {
+      continue;
+    };
+    let attachment_md = render_attachment_block_markdown(&block);
+    let sentinel_url = format!("__affine_attachment__:{block_id}");
+    if block.insert("sys:flavour", "affine:bookmark").is_ok()
+      && block.insert("prop:url", sentinel_url).is_ok()
+    {
+      replacements.push((block_id.to_string(), attachment_md));
+    }
+  }
+
+  if replacements.is_empty() {
+    return Ok(result);
+  }
+
+  let Ok(rewritten_bin) = doc.encode_update_v1() else {
+    return Ok(result);
+  };
+  let mut rewritten =
+    doc_loader::parse_doc_to_markdown(rewritten_bin, doc_id, ai_editable, doc_url_prefix)?;
+  for (block_id, attachment_md) in replacements {
+    let ai_bookmark_marker = format!(
+      "<!-- block_id={block_id} flavour=affine:bookmark -->\n\n[](Bookmark,__affine_attachment__:{block_id})\n\n"
+    );
+    if rewritten.markdown.contains(&ai_bookmark_marker) {
+      let replacement = if attachment_md.is_empty() {
+        String::new()
+      } else {
+        format!("<!-- block_id={block_id} flavour=affine:attachment -->\n{attachment_md}")
+      };
+      rewritten.markdown = rewritten.markdown.replacen(&ai_bookmark_marker, &replacement, 1);
+      continue;
+    }
+
+    let bookmark_marker = format!("\n[](Bookmark,__affine_attachment__:{block_id})\n\n");
+    if rewritten.markdown.contains(&bookmark_marker) {
+      rewritten.markdown = rewritten.markdown.replacen(&bookmark_marker, &attachment_md, 1);
+    } else if !attachment_md.is_empty() {
+      rewritten
+        .known_unsupported_blocks
+        .push(format!("{block_id}:affine:attachment"));
+    }
+  }
+
+  Ok(rewritten)
+}
+
 #[napi]
 pub fn parse_doc_to_markdown(
   doc_bin: Buffer,
@@ -341,7 +447,12 @@ pub fn parse_doc_to_markdown(
   doc_url_prefix: Option<String>,
 ) -> Result<NativeMarkdownResult> {
   let result = map_napi_err(
-    doc_loader::parse_doc_to_markdown(doc_bin.into(), doc_id, ai_editable.unwrap_or(false), doc_url_prefix),
+    parse_doc_to_markdown_with_attachments(
+      doc_bin.into(),
+      doc_id,
+      ai_editable.unwrap_or(false),
+      doc_url_prefix,
+    ),
     Status::GenericFailure,
   )?;
   Ok(result.into())
@@ -492,4 +603,71 @@ pub fn update_root_doc_meta_title(root_doc_bin: Buffer, doc_id: String, title: S
     Status::GenericFailure,
   )?;
   Ok(Buffer::from(result))
+}
+
+#[cfg(test)]
+mod tests {
+  use y_octo::{DocOptions, Value};
+
+  use super::*;
+
+  #[test]
+  fn test_parse_doc_to_markdown_attachment_block() {
+    let doc_id = "doc-with-attachment".to_string();
+    let doc = DocOptions::new().with_guid(doc_id.clone()).build();
+    let mut blocks = doc.get_or_create_map("blocks").unwrap();
+
+    let mut page = doc.create_map().unwrap();
+    page.insert("sys:id", "page").unwrap();
+    page.insert("sys:flavour", "affine:page").unwrap();
+    let mut page_children = doc.create_array().unwrap();
+    page_children.push("note").unwrap();
+    page.insert("sys:children", Value::Array(page_children)).unwrap();
+    let mut page_title = doc.create_text().unwrap();
+    page_title.insert(0, "Attachment Test Page").unwrap();
+    page.insert("prop:title", Value::Text(page_title)).unwrap();
+    blocks.insert("page", Value::Map(page)).unwrap();
+
+    let mut note = doc.create_map().unwrap();
+    note.insert("sys:id", "note").unwrap();
+    note.insert("sys:flavour", "affine:note").unwrap();
+    let mut note_children = doc.create_array().unwrap();
+    note_children.push("att1").unwrap();
+    note_children.push("att2").unwrap();
+    note.insert("sys:children", Value::Array(note_children)).unwrap();
+    note.insert("prop:displayMode", "both").unwrap();
+    blocks.insert("note", Value::Map(note)).unwrap();
+
+    let mut attachment = doc.create_map().unwrap();
+    attachment.insert("sys:id", "att1").unwrap();
+    attachment.insert("sys:flavour", "affine:attachment").unwrap();
+    attachment
+      .insert("sys:children", Value::Array(doc.create_array().unwrap()))
+      .unwrap();
+    attachment.insert("prop:name", "report]2026.txt").unwrap();
+    attachment.insert("prop:sourceId", "blob-source-123").unwrap();
+    blocks.insert("att1", Value::Map(attachment)).unwrap();
+
+    let mut missing_source = doc.create_map().unwrap();
+    missing_source.insert("sys:id", "att2").unwrap();
+    missing_source.insert("sys:flavour", "affine:attachment").unwrap();
+    missing_source
+      .insert("sys:children", Value::Array(doc.create_array().unwrap()))
+      .unwrap();
+    missing_source.insert("prop:name", "notes.txt").unwrap();
+    blocks.insert("att2", Value::Map(missing_source)).unwrap();
+
+    let doc_bin = doc.encode_update_v1().unwrap();
+    let result = parse_doc_to_markdown_with_attachments(doc_bin, doc_id, false, None).expect("parse attachment doc");
+    assert_eq!(result.title, "Attachment Test Page");
+    assert!(result.markdown.contains("[report\\]2026.txt](blob://blob-source-123)"));
+    assert!(result.markdown.contains("\nnotes.txt\n"));
+    assert!(!result.markdown.contains("[notes.txt]()"));
+    assert!(
+      !result
+        .known_unsupported_blocks
+        .iter()
+        .any(|entry| entry.ends_with(":affine:attachment"))
+    );
+  }
 }
