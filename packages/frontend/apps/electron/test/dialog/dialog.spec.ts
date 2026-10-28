@@ -32,6 +32,10 @@ vi.doMock('nanoid', () => ({
   nanoid: () => 'workspace-1',
 }));
 
+vi.doMock('@affine/electron/helper/logger', () => ({
+  logger: { log: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
 vi.doMock('@affine/native', () => {
   const ValidationResult = {
     MissingTables: 'MissingTables',
