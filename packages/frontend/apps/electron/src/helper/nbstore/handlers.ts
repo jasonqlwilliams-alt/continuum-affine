@@ -152,7 +152,5 @@ export function createNbstoreHandlers(
   };
 }
 
-export const {
-  forceDisconnect: forceDisconnectNbstore,
-  ...nbstoreHandlers
-} = createNbstoreHandlers();
+export const { forceDisconnect: forceDisconnectNbstore, ...nbstoreHandlers } =
+  createNbstoreHandlers();
