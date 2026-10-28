@@ -19,19 +19,14 @@ export interface Memento {
  */
 export class MemoryMemento implements Memento {
   private readonly data = new Map<string, LiveData<any>>();
+  private readonly values = new Map<string, any>();
 
   setAll(init: Record<string, any>) {
-    const existing: Array<[LiveData<any>, any]> = [];
     for (const [key, value] of Object.entries(init)) {
-      const data$ = this.data.get(key);
-      if (data$) {
-        existing.push([data$, value]);
-      } else {
-        this.data.set(key, new LiveData<any>(value));
-      }
+      this.values.set(key, value);
     }
-    for (const [data$, value] of existing) {
-      data$.next(value);
+    for (const [key, value] of Object.entries(init)) {
+      this.getLiveData(key).next(value);
     }
   }
 
@@ -45,24 +40,27 @@ export class MemoryMemento implements Memento {
   }
 
   get<T>(key: string): T | undefined {
-    return this.getLiveData(key).value;
+    return this.values.get(key);
   }
   watch<T>(key: string): Observable<T | undefined> {
     return this.getLiveData(key).asObservable();
   }
   set<T>(key: string, value: T): void {
+    this.values.set(key, value);
     this.getLiveData(key).next(value);
   }
   keys(): string[] {
-    return Array.from(this.data)
-      .filter(([_, v$]) => v$.value !== undefined)
-      .map(([k]) => k);
+    return Array.from(this.values)
+      .filter(([_, value]) => value !== undefined)
+      .map(([key]) => key);
   }
   clear(): void {
     this.data.clear();
+    this.values.clear();
   }
   del(key: string): void {
     this.data.delete(key);
+    this.values.delete(key);
   }
 }
 

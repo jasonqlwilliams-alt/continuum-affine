@@ -352,10 +352,11 @@ fn render_attachment_block_markdown(block: &y_octo::Map) -> String {
   } else {
     name.as_str()
   };
+  let escaped_label = label.replace('\\', "\\\\").replace('[', "\\[").replace(']', "\\]");
   if !source_id.is_empty() {
-    format!("\n[{label}](blob://{source_id})\n\n")
+    format!("\n[{escaped_label}](blob://{source_id})\n\n")
   } else if !label.is_empty() {
-    format!("\n[{label}]()\n\n")
+    format!("\n{escaped_label}\n\n")
   } else {
     String::new()
   }
@@ -642,6 +643,7 @@ mod tests {
     note.insert("sys:flavour", "affine:note").unwrap();
     let mut note_children = doc.create_array().unwrap();
     note_children.push("att1").unwrap();
+    note_children.push("att2").unwrap();
     note.insert("sys:children", Value::Array(note_children)).unwrap();
     note.insert("prop:displayMode", "both").unwrap();
     blocks.insert("note", Value::Map(note)).unwrap();
@@ -652,14 +654,25 @@ mod tests {
     attachment
       .insert("sys:children", Value::Array(doc.create_array().unwrap()))
       .unwrap();
-    attachment.insert("prop:name", "transcript.txt").unwrap();
+    attachment.insert("prop:name", "report]2026.txt").unwrap();
     attachment.insert("prop:sourceId", "blob-source-123").unwrap();
     blocks.insert("att1", Value::Map(attachment)).unwrap();
+
+    let mut missing_source = doc.create_map().unwrap();
+    missing_source.insert("sys:id", "att2").unwrap();
+    missing_source.insert("sys:flavour", "affine:attachment").unwrap();
+    missing_source
+      .insert("sys:children", Value::Array(doc.create_array().unwrap()))
+      .unwrap();
+    missing_source.insert("prop:name", "notes.txt").unwrap();
+    blocks.insert("att2", Value::Map(missing_source)).unwrap();
 
     let doc_bin = doc.encode_update_v1().unwrap();
     let result = parse_doc_to_markdown_with_attachments(doc_bin, doc_id, false, None).expect("parse attachment doc");
     assert_eq!(result.title, "Attachment Test Page");
-    assert!(result.markdown.contains("[transcript.txt](blob://blob-source-123)"));
+    assert!(result.markdown.contains("[report\\]2026.txt](blob://blob-source-123)"));
+    assert!(result.markdown.contains("\nnotes.txt\n"));
+    assert!(!result.markdown.contains("[notes.txt]()"));
     assert!(
       !result
         .known_unsupported_blocks

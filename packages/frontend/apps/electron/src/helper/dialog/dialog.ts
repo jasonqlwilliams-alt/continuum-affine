@@ -8,7 +8,7 @@ import { nanoid } from 'nanoid';
 import { isPathInsideBase } from '../../shared/utils';
 import { logger } from '../logger';
 import { mainRPC } from '../main-rpc';
-import { getDocStoragePool } from '../nbstore';
+import { getDocStoragePool, nbstoreHandlers } from '../nbstore';
 import { storeWorkspaceMeta } from '../workspace';
 import {
   getSpaceDBPath,
@@ -101,13 +101,15 @@ export async function saveDBFileAs(
   universalId: string,
   name: string
 ): Promise<SaveDBFileResult> {
+  let connected = false;
   try {
     const { peer, type, id } = parseUniversalId(universalId);
     const dbPath = await getSpaceDBPath(peer, type, id);
 
     // connect to the pool and make sure all changes (WAL) are written to db
     const pool = getDocStoragePool();
-    await pool.connect(universalId, dbPath);
+    await nbstoreHandlers.connect(universalId);
+    connected = true;
     await pool.checkpoint(universalId); // make sure all changes (WAL) are written to db
 
     if (!dbPath) {
@@ -163,6 +165,10 @@ export async function saveDBFileAs(
     return {
       error: 'UNKNOWN_ERROR',
     };
+  } finally {
+    if (connected) {
+      await nbstoreHandlers.disconnect(universalId);
+    }
   }
 }
 

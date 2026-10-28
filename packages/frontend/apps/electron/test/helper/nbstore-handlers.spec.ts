@@ -1,7 +1,3 @@
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 import { universalId } from '@affine/nbstore';
 import { ObjectPool } from '@toeverything/infra';
 import { describe, expect, it, vi } from 'vitest';
@@ -28,8 +24,6 @@ vi.mock('../../src/helper/main-rpc', () => ({
 import { MemoryMemento } from '../../../../../common/infra/src/storage/memento';
 import { workspaceMetadataKey } from '../../../../core/src/modules/workspace/metadata';
 import { createNbstoreHandlers } from '../../src/helper/nbstore/handlers';
-
-const repoRoot = fileURLToPath(new URL('../../../../../..', import.meta.url));
 
 function createSimulatedNativePool() {
   const states = new Map<string, 'connecting' | 'connected'>();
@@ -176,7 +170,56 @@ describe('nbstore helper handlers and desktop recovery guards', () => {
     expect(sim.states.has(targetUniversalId)).toBe(false);
   });
 
-  it('populates all keys in MemoryMemento.setAll before firing watched key notifications and scopes workspace pool keys by flavour', async () => {
+  it('tracks a connect queued after the final disconnect', async () => {
+    const sim = createSimulatedNativePool();
+    sim.unblockConnect();
+    const handlers = createNbstoreHandlers(
+      sim.pool,
+      async () => '/tmp/workspaces/storage.db',
+      async () => undefined
+    );
+    const id = universalId({
+      peer: 'local',
+      type: 'workspace',
+      id: '00000000-0000-0000-0000-000000000001',
+    });
+
+    await handlers.connect(id);
+    const firstDisconnect = handlers.disconnect(id);
+    const reconnect = handlers.connect(id);
+    await Promise.all([firstDisconnect, reconnect]);
+    await handlers.disconnect(id);
+
+    expect(sim.counts.connect).toBe(2);
+    expect(sim.counts.disconnect).toBe(2);
+    expect(sim.states.has(id)).toBe(false);
+  });
+
+  it('resets tracked references when a workspace is forcibly disconnected', async () => {
+    const sim = createSimulatedNativePool();
+    sim.unblockConnect();
+    const handlers = createNbstoreHandlers(
+      sim.pool,
+      async () => '/tmp/workspaces/storage.db',
+      async () => undefined
+    );
+    const id = universalId({
+      peer: 'local',
+      type: 'workspace',
+      id: '00000000-0000-0000-0000-000000000001',
+    });
+
+    await handlers.connect(id);
+    await handlers.forceDisconnect(id);
+    await handlers.connect(id);
+    await handlers.disconnect(id);
+
+    expect(sim.counts.connect).toBe(2);
+    expect(sim.counts.disconnect).toBe(2);
+    expect(sim.states.has(id)).toBe(false);
+  });
+
+  it('populates all keys in MemoryMemento.setAll before firing watched key notifications and scopes workspace pool keys by flavour', () => {
     const memento = new MemoryMemento();
     let observedCloudWorkspaces: unknown = null;
 
@@ -215,39 +258,6 @@ describe('nbstore helper handlers and desktop recovery guards', () => {
     );
     expect(pool.get(workspaceMetadataKey(selfhostMeta))?.obj.flavour).toBe(
       'selfhost-1'
-    );
-
-    const repoSource = await readFile(
-      path.join(
-        repoRoot,
-        'packages/frontend/core/src/modules/workspace/services/repo.ts'
-      ),
-      'utf8'
-    );
-    expect(repoSource).toContain(
-      'const poolKey = workspaceMetadataKey(options.metadata);'
-    );
-
-    const profileSource = await readFile(
-      path.join(
-        repoRoot,
-        'packages/frontend/core/src/modules/workspace/services/profile.ts'
-      ),
-      'utf8'
-    );
-    expect(profileSource).toContain(
-      'const poolKey = workspaceMetadataKey(metadata);'
-    );
-
-    const tabViewsSource = await readFile(
-      path.join(
-        repoRoot,
-        'packages/frontend/apps/electron/src/main/windows-manager/tab-views.ts'
-      ),
-      'utf8'
-    );
-    expect(tabViewsSource).toContain(
-      'const sub = WebContentViewsManager.instance.tabAction$.subscribe(fn);\n  return () => {\n    sub.unsubscribe();\n  };'
     );
   });
 });

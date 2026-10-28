@@ -18,6 +18,7 @@ type PoolLike = Pick<DocStoragePool, keyof NativeDBApis | 'setSpaceId'>;
 interface ConnectionState {
   refCount: number;
   connected: boolean;
+  pending: number;
   queue: Promise<void>;
 }
 
@@ -25,7 +26,7 @@ export function createNbstoreHandlers(
   pool: PoolLike = POOL,
   resolveSpaceDBPath: typeof getSpaceDBPath = getSpaceDBPath,
   ensureDir: (dir: string) => Promise<void> = dir => fs.ensureDir(dir)
-): NativeDBApis {
+): NativeDBApis & { forceDisconnect(universalId: string): Promise<void> } {
   const connections = new Map<string, ConnectionState>();
 
   const getState = (universalId: string): ConnectionState => {
@@ -34,6 +35,7 @@ export function createNbstoreHandlers(
       state = {
         refCount: 0,
         connected: false,
+        pending: 0,
         queue: Promise.resolve(),
       };
       connections.set(universalId, state);
@@ -42,13 +44,25 @@ export function createNbstoreHandlers(
   };
 
   const enqueue = <T>(
+    universalId: string,
     state: ConnectionState,
     task: () => Promise<T>
   ): Promise<T> => {
+    state.pending += 1;
     const next = state.queue.then(task, task);
     state.queue = next.then(
-      () => undefined,
-      () => undefined
+      () => {
+        state.pending -= 1;
+        if (state.pending === 0 && !state.connected) {
+          connections.delete(universalId);
+        }
+      },
+      () => {
+        state.pending -= 1;
+        if (state.pending === 0 && !state.connected) {
+          connections.delete(universalId);
+        }
+      }
     );
     return next;
   };
@@ -56,7 +70,7 @@ export function createNbstoreHandlers(
   return {
     connect: (universalId: string) => {
       const state = getState(universalId);
-      return enqueue(state, async () => {
+      return enqueue(universalId, state, async () => {
         if (!state.connected) {
           const { peer, type, id } = parseUniversalId(universalId);
           const dbPath = await resolveSpaceDBPath(peer, type, id);
@@ -73,15 +87,22 @@ export function createNbstoreHandlers(
       if (!state) {
         return Promise.resolve();
       }
-      return enqueue(state, async () => {
+      return enqueue(universalId, state, async () => {
         if (state.refCount > 0) {
           state.refCount -= 1;
         }
         if (state.refCount === 0 && state.connected) {
           await pool.disconnect(universalId);
           state.connected = false;
-          connections.delete(universalId);
         }
+      });
+    },
+    forceDisconnect: (universalId: string) => {
+      const state = getState(universalId);
+      return enqueue(universalId, state, async () => {
+        await pool.disconnect(universalId);
+        state.connected = false;
+        state.refCount = 0;
       });
     },
     pushUpdate: pool.pushUpdate.bind(pool),
@@ -121,4 +142,7 @@ export function createNbstoreHandlers(
   };
 }
 
-export const nbstoreHandlers: NativeDBApis = createNbstoreHandlers();
+export const {
+  forceDisconnect: forceDisconnectNbstore,
+  ...nbstoreHandlers
+} = createNbstoreHandlers();
