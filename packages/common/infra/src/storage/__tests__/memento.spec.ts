@@ -37,4 +37,28 @@ describe('memento', () => {
 
     expect(observedB).toBe('new-b');
   });
+
+  test('setAll skips a later key replaced by an observer', () => {
+    const memento = new MemoryMemento();
+    memento.setAll({ a: 'old-a', b: 'old-b' });
+    const observedB: string[] = [];
+    let stagedB: string | undefined;
+    memento.watch<string>('b').subscribe(value => {
+      if (value !== undefined) {
+        observedB.push(value);
+      }
+    });
+    memento.watch<string>('a').subscribe(value => {
+      if (value === 'new-a') {
+        stagedB = memento.get('b');
+        memento.set('b', 'override');
+      }
+    });
+
+    memento.setAll({ a: 'new-a', b: 'new-b' });
+
+    expect(stagedB).toBe('new-b');
+    expect(observedB).toEqual(['old-b', 'override']);
+    expect(memento.get('b')).toBe('override');
+  });
 });

@@ -19,14 +19,27 @@ export interface Memento {
  */
 export class MemoryMemento implements Memento {
   private readonly data = new Map<string, LiveData<any>>();
-  private readonly values = new Map<string, any>();
+  private readonly pendingBatches: Map<string, any>[] = [];
 
   setAll(init: Record<string, any>) {
-    for (const [key, value] of Object.entries(init)) {
-      this.values.set(key, value);
+    const entries = Object.entries(init);
+    const pending = new Map(entries);
+    this.pendingBatches.push(pending);
+    try {
+      for (const [key, value] of entries) {
+        if (pending.has(key)) {
+          this.invalidatePending(key);
+          this.getLiveData(key).next(value);
+        }
+      }
+    } finally {
+      this.pendingBatches.pop();
     }
-    for (const [key, value] of Object.entries(init)) {
-      this.getLiveData(key).next(value);
+  }
+
+  private invalidatePending(key: string) {
+    for (const batch of this.pendingBatches) {
+      batch.delete(key);
     }
   }
 
@@ -40,27 +53,35 @@ export class MemoryMemento implements Memento {
   }
 
   get<T>(key: string): T | undefined {
-    return this.values.get(key);
+    for (let i = this.pendingBatches.length - 1; i >= 0; i--) {
+      const batch = this.pendingBatches[i];
+      if (batch && batch.has(key)) {
+        return batch.get(key);
+      }
+    }
+    return this.getLiveData(key).value;
   }
   watch<T>(key: string): Observable<T | undefined> {
     return this.getLiveData(key).asObservable();
   }
   set<T>(key: string, value: T): void {
-    this.values.set(key, value);
+    this.invalidatePending(key);
     this.getLiveData(key).next(value);
   }
   keys(): string[] {
-    return Array.from(this.values)
-      .filter(([_, value]) => value !== undefined)
+    return Array.from(this.data)
+      .filter(([_, data$]) => data$.value !== undefined)
       .map(([key]) => key);
   }
   clear(): void {
     this.data.clear();
-    this.values.clear();
+    for (const batch of this.pendingBatches) {
+      batch.clear();
+    }
   }
   del(key: string): void {
     this.data.delete(key);
-    this.values.delete(key);
+    this.invalidatePending(key);
   }
 }
 

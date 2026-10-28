@@ -334,11 +334,7 @@ pub fn parse_workspace_doc(doc_bin: Buffer) -> Result<Option<NativeWorkspaceDocC
 }
 
 fn get_block_string(block: &y_octo::Map, key: &str) -> Option<String> {
-  let value = block.get(key)?;
-  if let Some(text) = value.to_text() {
-    return Some(text.to_string());
-  }
-  match value.to_any()? {
+  match block.get(key)?.to_any()? {
     y_octo::Any::String(s) => Some(s),
     _ => None,
   }
@@ -395,13 +391,7 @@ fn parse_doc_to_markdown_with_attachments(
     let Some(block_id) = entry.strip_suffix(":affine:attachment") else {
       continue;
     };
-    let block_map = blocks.get(block_id).and_then(|v| v.to_map()).or_else(|| {
-      blocks.iter().find_map(|(_, v)| {
-        let map = v.to_map()?;
-        (get_block_string(&map, "sys:id").as_deref() == Some(block_id)).then_some(map)
-      })
-    });
-    let Some(mut block) = block_map else {
+    let Some(mut block) = blocks.get(block_id).and_then(|v| v.to_map()) else {
       continue;
     };
     let attachment_md = render_attachment_block_markdown(&block);
