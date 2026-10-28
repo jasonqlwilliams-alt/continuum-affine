@@ -101,15 +101,14 @@ export async function saveDBFileAs(
   universalId: string,
   name: string
 ): Promise<SaveDBFileResult> {
-  let connected = false;
+  let lease: string | undefined;
   try {
     const { peer, type, id } = parseUniversalId(universalId);
     const dbPath = await getSpaceDBPath(peer, type, id);
 
     // connect to the pool and make sure all changes (WAL) are written to db
     const pool = getDocStoragePool();
-    await nbstoreHandlers.connect(universalId);
-    connected = true;
+    lease = await nbstoreHandlers.connect(universalId);
     await pool.checkpoint(universalId); // make sure all changes (WAL) are written to db
 
     if (!dbPath) {
@@ -166,8 +165,8 @@ export async function saveDBFileAs(
       error: 'UNKNOWN_ERROR',
     };
   } finally {
-    if (connected) {
-      await nbstoreHandlers.disconnect(universalId);
+    if (lease) {
+      await nbstoreHandlers.disconnect(universalId, lease);
     }
   }
 }

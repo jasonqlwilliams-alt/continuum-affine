@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 import { DocStoragePool } from '@affine/native';
@@ -16,7 +17,7 @@ export function getDocStoragePool() {
 type PoolLike = Pick<DocStoragePool, keyof NativeDBApis | 'setSpaceId'>;
 
 interface ConnectionState {
-  refCount: number;
+  leases: Set<string>;
   connected: boolean;
   pending: number;
   queue: Promise<void>;
@@ -26,14 +27,17 @@ export function createNbstoreHandlers(
   pool: PoolLike = POOL,
   resolveSpaceDBPath: typeof getSpaceDBPath = getSpaceDBPath,
   ensureDir: (dir: string) => Promise<void> = dir => fs.ensureDir(dir)
-): NativeDBApis & { forceDisconnect(universalId: string): Promise<void> } {
+): Omit<NativeDBApis, 'connect'> & {
+  connect(universalId: string): Promise<string>;
+  forceDisconnect(universalId: string): Promise<void>;
+} {
   const connections = new Map<string, ConnectionState>();
 
   const getState = (universalId: string): ConnectionState => {
     let state = connections.get(universalId);
     if (!state) {
       state = {
-        refCount: 0,
+        leases: new Set(),
         connected: false,
         pending: 0,
         queue: Promise.resolve(),
@@ -79,19 +83,25 @@ export function createNbstoreHandlers(
           await pool.setSpaceId(universalId, id);
           state.connected = true;
         }
-        state.refCount += 1;
+        const lease = randomUUID();
+        state.leases.add(lease);
+        return lease;
       });
     },
-    disconnect: (universalId: string) => {
+    disconnect: (universalId: string, lease?: string) => {
+      if (!lease) {
+        return Promise.resolve();
+      }
       const state = connections.get(universalId);
       if (!state) {
         return Promise.resolve();
       }
       return enqueue(universalId, state, async () => {
-        if (state.refCount > 0) {
-          state.refCount -= 1;
-        }
-        if (state.refCount === 0 && state.connected) {
+        if (
+          state.leases.delete(lease) &&
+          state.leases.size === 0 &&
+          state.connected
+        ) {
           await pool.disconnect(universalId);
           state.connected = false;
         }
@@ -102,7 +112,7 @@ export function createNbstoreHandlers(
       return enqueue(universalId, state, async () => {
         await pool.disconnect(universalId);
         state.connected = false;
-        state.refCount = 0;
+        state.leases.clear();
       });
     },
     pushUpdate: pool.pushUpdate.bind(pool),

@@ -147,15 +147,15 @@ describe('nbstore helper handlers and desktop recovery guards', () => {
     });
 
     // 1. background-worker WorkspaceEngine connects
-    await handlers.connect(targetUniversalId);
+    const workerLease = await handlers.connect(targetUniversalId);
     // 2. tab WebContentsView getWorkspaceProfile connects, reads root doc, and disconnects
-    await handlers.connect(targetUniversalId);
+    const tabLease = await handlers.connect(targetUniversalId);
     const snap = await handlers.getDoc(
       targetUniversalId,
       '00000000-0000-0000-0000-000000000001'
     );
     expect(snap?.docId).toBe('00000000-0000-0000-0000-000000000001');
-    await handlers.disconnect(targetUniversalId);
+    await handlers.disconnect(targetUniversalId, tabLease);
 
     // Pool must remain connected for background-worker WorkspaceEngine
     expect(sim.counts.disconnect).toBe(0);
@@ -165,7 +165,7 @@ describe('nbstore helper handlers and desktop recovery guards', () => {
     expect(workerRead?.docId).toBe('doc-1');
 
     // 3. background-worker disconnects on workspace close
-    await handlers.disconnect(targetUniversalId);
+    await handlers.disconnect(targetUniversalId, workerLease);
     expect(sim.counts.disconnect).toBe(1);
     expect(sim.states.has(targetUniversalId)).toBe(false);
   });
@@ -184,18 +184,18 @@ describe('nbstore helper handlers and desktop recovery guards', () => {
       id: '00000000-0000-0000-0000-000000000001',
     });
 
-    await handlers.connect(id);
-    const firstDisconnect = handlers.disconnect(id);
+    const firstLease = await handlers.connect(id);
+    const firstDisconnect = handlers.disconnect(id, firstLease);
     const reconnect = handlers.connect(id);
-    await Promise.all([firstDisconnect, reconnect]);
-    await handlers.disconnect(id);
+    const [, reconnectLease] = await Promise.all([firstDisconnect, reconnect]);
+    await handlers.disconnect(id, reconnectLease);
 
     expect(sim.counts.connect).toBe(2);
     expect(sim.counts.disconnect).toBe(2);
     expect(sim.states.has(id)).toBe(false);
   });
 
-  it('resets tracked references when a workspace is forcibly disconnected', async () => {
+  it('invalidates a save-dialog lease after deletion without closing a reopened tab', async () => {
     const sim = createSimulatedNativePool();
     sim.unblockConnect();
     const handlers = createNbstoreHandlers(
@@ -209,10 +209,15 @@ describe('nbstore helper handlers and desktop recovery guards', () => {
       id: '00000000-0000-0000-0000-000000000001',
     });
 
-    await handlers.connect(id);
+    const saveDialogLease = await handlers.connect(id);
     await handlers.forceDisconnect(id);
-    await handlers.connect(id);
-    await handlers.disconnect(id);
+    const tabLease = await handlers.connect(id);
+    await handlers.disconnect(id, saveDialogLease);
+
+    expect(sim.counts.disconnect).toBe(1);
+    expect((await handlers.getDoc(id, 'doc-1'))?.docId).toBe('doc-1');
+
+    await handlers.disconnect(id, tabLease);
 
     expect(sim.counts.connect).toBe(2);
     expect(sim.counts.disconnect).toBe(2);

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
-const connect = vi.fn();
+const connect = vi.fn(async () => 'save-dialog-lease');
 const disconnect = vi.fn();
 const checkpoint = vi.fn();
 const poolVacuumInto = vi.fn();
@@ -148,7 +148,7 @@ describe('dialog export', () => {
 
     expect(result).toEqual({ filePath: exportPath });
     expect(connect).toHaveBeenCalledWith(id);
-    expect(disconnect).toHaveBeenCalledWith(id);
+    expect(disconnect).toHaveBeenCalledWith(id, 'save-dialog-lease');
     expect(checkpoint).toHaveBeenCalledWith(id);
     expect(poolVacuumInto).toHaveBeenCalledWith(id, tempExportPath);
     expect(move).toHaveBeenCalledWith(tempExportPath, exportPath, {
