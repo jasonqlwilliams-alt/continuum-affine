@@ -59,7 +59,8 @@ export class WorkspaceRepositoryService extends Service {
       };
     }
 
-    const exist = this.pool.get(workspaceMetadataKey(options.metadata));
+    const poolKey = workspaceMetadataKey(options.metadata);
+    const exist = this.pool.get(poolKey);
     if (exist) {
       return {
         workspace: exist.obj,
@@ -69,7 +70,7 @@ export class WorkspaceRepositoryService extends Service {
 
     const workspace = this.instantiate(options, customEngineWorkerInitOptions);
 
-    const ref = this.pool.put(workspaceMetadataKey(workspace.meta), workspace);
+    const ref = this.pool.put(poolKey, workspace);
 
     return {
       workspace: ref.obj,

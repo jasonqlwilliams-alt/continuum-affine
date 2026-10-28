@@ -7,8 +7,8 @@ export class WorkspaceProfileService extends Service {
   pool = new ObjectPool<string, WorkspaceProfile>();
 
   getProfile = (metadata: WorkspaceMetadata): WorkspaceProfile => {
-    const key = workspaceMetadataKey(metadata);
-    const exists = this.pool.get(key);
+    const poolKey = workspaceMetadataKey(metadata);
+    const exists = this.pool.get(poolKey);
     if (exists) {
       return exists.obj;
     }
@@ -17,6 +17,6 @@ export class WorkspaceProfileService extends Service {
       metadata,
     });
 
-    return this.pool.put(key, profile).obj;
+    return this.pool.put(poolKey, profile).obj;
   };
 }

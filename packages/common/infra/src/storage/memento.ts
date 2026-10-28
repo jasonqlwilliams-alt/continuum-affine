@@ -21,8 +21,17 @@ export class MemoryMemento implements Memento {
   private readonly data = new Map<string, LiveData<any>>();
 
   setAll(init: Record<string, any>) {
+    const existing: Array<[LiveData<any>, any]> = [];
     for (const [key, value] of Object.entries(init)) {
-      this.set(key, value);
+      const data$ = this.data.get(key);
+      if (data$) {
+        existing.push([data$, value]);
+      } else {
+        this.data.set(key, new LiveData<any>(value));
+      }
+    }
+    for (const [data$, value] of existing) {
+      data$.next(value);
     }
   }
 
