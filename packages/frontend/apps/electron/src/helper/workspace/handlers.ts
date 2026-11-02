@@ -11,7 +11,7 @@ import {
   resolveExistingPathInBase,
 } from '../../shared/utils';
 import { logger } from '../logger';
-import { getDocStoragePool } from '../nbstore';
+import { forceDisconnectNbstore, getDocStoragePool } from '../nbstore';
 import { ensureSQLiteDisconnected } from '../nbstore/v1/ensure-db';
 import { WorkspaceSQLiteDB } from '../nbstore/v1/workspace-db-adapter';
 import type { WorkspaceMeta } from '../type';
@@ -43,7 +43,7 @@ export async function deleteWorkspace(universalId: string) {
 
   const dbPath = await getSpaceDBPath(peer, type, id);
   try {
-    await getDocStoragePool().disconnect(universalId);
+    await forceDisconnectNbstore(universalId);
     await fs.remove(path.dirname(dbPath));
   } catch (e) {
     logger.error('deleteWorkspace', e);
@@ -67,7 +67,7 @@ export async function trashWorkspace(universalId: string) {
     if (await storage.validate()) {
       const pool = getDocStoragePool();
       await pool.checkpoint(universalId);
-      await pool.disconnect(universalId);
+      await forceDisconnectNbstore(universalId);
     }
     await fs.ensureDir(movedPath);
     // todo(@pengx17): it seems the db file is still being used at the point

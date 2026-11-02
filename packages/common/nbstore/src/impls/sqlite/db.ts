@@ -52,8 +52,8 @@ export interface NativeIndexSearchResult {
 }
 
 export interface NativeDBApis {
-  connect: (id: string) => Promise<void>;
-  disconnect: (id: string) => Promise<void>;
+  connect: (id: string) => Promise<string | void>;
+  disconnect: (id: string, lease?: string) => Promise<void>;
   pushUpdate: (id: string, docId: string, update: Uint8Array) => Promise<Date>;
   getDoc: (id: string, docId: string) => Promise<DocRecord | null>;
   deleteDoc: (id: string, docId: string) => Promise<void>;
@@ -179,7 +179,9 @@ export function bindNativeDBApis(a: NativeDBApis) {
   apis = a;
 }
 
-export class NativeDBConnection extends AutoReconnectConnection<void> {
+export class NativeDBConnection extends AutoReconnectConnection<{
+  lease: string | undefined;
+}> {
   readonly apis: NativeDBApisWrapper;
 
   readonly flavour = this.options.flavour;
@@ -226,11 +228,12 @@ export class NativeDBConnection extends AutoReconnectConnection<void> {
   }
 
   override async doConnect() {
-    await this.apis.connect();
+    const lease = await this.apis.connect();
+    return { lease: typeof lease === 'string' ? lease : undefined };
   }
 
-  override doDisconnect() {
-    this.apis.disconnect().catch(err => {
+  override doDisconnect(conn: { lease: string | undefined }) {
+    this.apis.disconnect(conn.lease).catch(err => {
       console.error('NativeDBConnection close failed', err);
     });
   }

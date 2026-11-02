@@ -1198,10 +1198,10 @@ export const reloadView = async () => {
 };
 
 export const onTabAction = (fn: (event: TabAction) => void) => {
-  const { unsubscribe } =
-    WebContentViewsManager.instance.tabAction$.subscribe(fn);
-
-  return unsubscribe;
+  const sub = WebContentViewsManager.instance.tabAction$.subscribe(fn);
+  return () => {
+    sub.unsubscribe();
+  };
 };
 
 export const onActiveTabChanged = (fn: (tabId: string) => void) => {

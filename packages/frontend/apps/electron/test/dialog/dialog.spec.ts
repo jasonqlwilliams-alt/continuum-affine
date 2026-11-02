@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
-const connect = vi.fn();
+const connect = vi.fn(async () => 'save-dialog-lease');
+const disconnect = vi.fn();
 const checkpoint = vi.fn();
 const poolVacuumInto = vi.fn();
 const pathExists = vi.fn();
@@ -29,6 +30,10 @@ const getPath = vi.fn();
 
 vi.doMock('nanoid', () => ({
   nanoid: () => 'workspace-1',
+}));
+
+vi.doMock('@affine/electron/helper/logger', () => ({
+  logger: { log: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 vi.doMock('@affine/native', () => {
@@ -84,8 +89,8 @@ vi.doMock('@affine/native', () => {
 });
 
 vi.doMock('@affine/electron/helper/nbstore', () => ({
+  nbstoreHandlers: { connect, disconnect },
   getDocStoragePool: () => ({
-    connect,
     checkpoint,
     vacuumInto: poolVacuumInto,
   }),
@@ -146,7 +151,8 @@ describe('dialog export', () => {
     const result = await saveDBFileAs(id, 'My Space');
 
     expect(result).toEqual({ filePath: exportPath });
-    expect(connect).toHaveBeenCalledWith(id, dbPath);
+    expect(connect).toHaveBeenCalledWith(id);
+    expect(disconnect).toHaveBeenCalledWith(id, 'save-dialog-lease');
     expect(checkpoint).toHaveBeenCalledWith(id);
     expect(poolVacuumInto).toHaveBeenCalledWith(id, tempExportPath);
     expect(move).toHaveBeenCalledWith(tempExportPath, exportPath, {
